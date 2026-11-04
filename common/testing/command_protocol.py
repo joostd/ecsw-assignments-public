@@ -15,7 +15,10 @@ methods that call _send_test_command() with appropriate command strings.
 
 import logging
 from typing import Optional
-from common.testing.platform_interface import PlatformInterface
+from common.testing.platform_interface import (
+    DEFAULT_BENCHMARK_TIMEOUT,
+    PlatformInterface,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +125,11 @@ class CommandProtocol:
         Returns:
             Cycle count as integer, or None on error
         """
-        response = self.platform.send_command(command)
+        # Benchmarks loop many times on the target, so they get a far longer
+        # budget than the default used for ordinary commands.
+        response = self.platform.send_command(
+            command, timeout=DEFAULT_BENCHMARK_TIMEOUT
+        )
 
         if not response:
             logger.error(f"No response for benchmark: {command}")

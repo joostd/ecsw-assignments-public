@@ -49,12 +49,16 @@ class PlatformInterface(ABC):
         pass
 
     @abstractmethod
-    def send_command(self, command: str) -> Optional[str]:
+    def send_command(
+        self, command: str, timeout: Optional[float] = None
+    ) -> Optional[str]:
         """
         Send a command and wait for response.
 
         Args:
             command: Command string (without newline)
+            timeout: Seconds to wait for the response. None uses the
+                platform's configured default.
 
         Returns:
             Response string or None on error
@@ -71,11 +75,55 @@ class PlatformInterface(ABC):
         self.disconnect()
 
 
+# USB vendor IDs of serial adapters used with the course boards. The Nucleo
+# reaches the host through its on-board ST-LINK; the STM32F4DISCOVERY has no
+# usable virtual COM port, so its USART2 (PA2/PA3) needs an external adapter,
+# which may be a Raspberry Pi Debug Probe or any generic USB-TTL bridge.
+KNOWN_SERIAL_VIDS = {
+    0x0483: "ST-LINK virtual COM port",
+    0x2E8A: "Raspberry Pi Debug Probe",
+    0x0403: "FTDI USB-serial adapter",
+    0x10C4: "Silicon Labs CP210x adapter",
+    0x1A86: "WCH CH340 adapter",
+    0x067B: "Prolific PL2303 adapter",
+}
+
+# Seconds to wait for a reply before giving up. Ordinary commands answer in
+# milliseconds, so a short default turns an unresponsive board into a quick
+# failure instead of an apparent hang. Benchmarks loop thousands of times on
+# the target and pass their own, much longer, timeout.
+DEFAULT_COMMAND_TIMEOUT = 15.0
+DEFAULT_BENCHMARK_TIMEOUT = 600.0
+
+
+def find_candidate_ports():
+    """
+    List serial ports that look like a connected board or UART adapter.
+
+    Returns:
+        List of (device, label, description) tuples.
+    """
+    import serial.tools.list_ports
+
+    candidates = []
+    for port in serial.tools.list_ports.comports():
+        label = KNOWN_SERIAL_VIDS.get(port.vid)
+        if label is None and "STM" in (port.description or ""):
+            label = "STM device"
+        if label:
+            candidates.append((port.device, label, port.description))
+    return candidates
+
+
 class BoardPlatform(PlatformInterface):
     """Physical board communication via UART."""
 
     def __init__(
-        self, port: Optional[str] = None, baudrate: int = 115200, timeout: float = 5.0
+        self,
+        port: Optional[str] = None,
+        baudrate: int = 115200,
+        timeout: float = 5.0,
+        command_timeout: Optional[float] = None,
     ):
         """
         Initialize board platform.
@@ -84,10 +132,17 @@ class BoardPlatform(PlatformInterface):
             port: Serial port path (falls back to $SERIAL_PORT, then auto-detect)
             baudrate: Communication speed
             timeout: Read timeout in seconds
+            command_timeout: Seconds to wait for a command response (falls back
+                to $COMMAND_TIMEOUT, then DEFAULT_COMMAND_TIMEOUT)
         """
         self.port = port or os.environ.get("SERIAL_PORT") or None
         self.baudrate = baudrate
         self.timeout = timeout
+        if command_timeout is None:
+            command_timeout = float(
+                os.environ.get("COMMAND_TIMEOUT") or DEFAULT_COMMAND_TIMEOUT
+            )
+        self.command_timeout = command_timeout
         self.serial = None
 
     def connect(self) -> bool:
@@ -97,15 +152,29 @@ class BoardPlatform(PlatformInterface):
 
         # Auto-detect port if not specified
         if self.port is None:
-            for port in serial.tools.list_ports.comports():
-                if "STM" in port.description:
-                    self.port = port.device
-                    logger.info(f"Auto-detected board at {self.port}")
-                    break
+            candidates = find_candidate_ports()
 
-        if self.port is None:
-            logger.error("No board found. Please specify port manually.")
-            return False
+            if not candidates:
+                logger.error(
+                    "No board or UART adapter found. "
+                    "Connect one, or set SERIAL_PORT to the port to use."
+                )
+                return False
+
+            if len(candidates) > 1:
+                # Guessing here is how you end up talking to the wrong device:
+                # on the STM32F4DISCOVERY the ST-LINK enumerates a virtual COM
+                # port that is not wired to the target's USART at all.
+                logger.error(
+                    "Multiple candidate serial ports found; "
+                    "set SERIAL_PORT to choose one:"
+                )
+                for device, label, description in candidates:
+                    logger.error(f"    {device}  -  {label} ({description})")
+                return False
+
+            self.port, label, _ = candidates[0]
+            logger.info(f"Auto-detected {label} at {self.port}")
 
         try:
             self.serial = serial.Serial(
@@ -131,7 +200,9 @@ class BoardPlatform(PlatformInterface):
             self.serial.close()
             logger.info("Disconnected from board")
 
-    def send_command(self, command: str) -> Optional[str]:
+    def send_command(
+        self, command: str, timeout: Optional[float] = None
+    ) -> Optional[str]:
         """Send command via UART and receive response."""
         if not self.serial or not self.serial.is_open:
             logger.error("Board not connected")
@@ -145,9 +216,17 @@ class BoardPlatform(PlatformInterface):
             logger.debug(f"Sent to board: {command}")
 
             # Read response
-            self.serial.timeout = 1000
+            self.serial.timeout = self.command_timeout if timeout is None else timeout
             response = self.serial.readline().decode("ascii").strip()
             logger.debug(f"Received from board: {response}")
+
+            if not response:
+                logger.error(
+                    f"No response to '{command}' after {self.serial.timeout:g}s. "
+                    "Check that the board is flashed and that the UART is wired "
+                    "to the port in use."
+                )
+                return None
 
             return response
         except Exception as e:
@@ -270,13 +349,18 @@ class QEMUPlatform(PlatformInterface):
 
         logger.info("QEMU disconnected")
 
-    def send_command(self, command: str) -> Optional[str]:
+    def send_command(
+        self, command: str, timeout: Optional[float] = None
+    ) -> Optional[str]:
         """Send command via TCP socket and receive response."""
         if not self.socket:
             logger.error("QEMU not connected")
             return None
 
         try:
+            if timeout is not None:
+                self.socket.settimeout(timeout)
+
             # Send command
             cmd_bytes = (command + "\n").encode("ascii")
             self.socket.sendall(cmd_bytes)
