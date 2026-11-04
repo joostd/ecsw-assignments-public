@@ -35,6 +35,7 @@ QEMU_FLAGS = -M $(QEMU_MACHINE) -nographic -semihosting
 
 # Platform selection (default: board)
 #   board            - Nucleo-L4R5ZI
+#   stm32l476rg      - Nucleo-L476RG, UART on PA2 (TX) / PA3 (RX) via the ST-LINK VCP
 #   stm32f4discovery - STM32F407VG (STM32F4DISCOVERY), UART on PA2 (TX) / PA3 (RX)
 #   qemu             - QEMU mps2-an386 emulation
 PLATFORM ?= board
@@ -58,7 +59,22 @@ else ifeq ($(PLATFORM),stm32f4discovery)
   STARTUP_SRC =
   OPENCM3_TARGET = stm32/f4
   OPENCM3_FAMILY = STM32F4
+  BOARD_DEFINE = STM32F4DISCOVERY_BOARD
   OPENOCD_CFG ?= board/stm32f4discovery.cfg
+else ifeq ($(PLATFORM),stm32l476rg)
+  DEVICE = STM32L476RG
+  ARCH = cortex-m4
+  FPU = fpv4-sp-d16
+  LDSCRIPT ?= $(COMMON_DIR)/stm32l476rg.ld
+  HAL_SRC = $(COMMON_DIR)/hal/hal.c
+  # Distinct from the L4R5ZI object: both are OPENCM3_FAMILY=STM32L4 but the
+  # HAL compiles differently for each, so they must not share an output file.
+  HAL_OBJ = $(COMMON_DIR)/hal/hal-stm32l476rg.o
+  STARTUP_SRC =
+  OPENCM3_TARGET = stm32/l4
+  OPENCM3_FAMILY = STM32L4
+  BOARD_DEFINE = NUCLEO_L476RG_BOARD
+  OPENOCD_CFG ?= board/st_nucleo_l4.cfg
 else ifeq ($(PLATFORM),board)
   DEVICE = STM32L4R5ZI
   ARCH = cortex-m4
@@ -69,9 +85,10 @@ else ifeq ($(PLATFORM),board)
   STARTUP_SRC =
   OPENCM3_TARGET = stm32/l4
   OPENCM3_FAMILY = STM32L4
+  BOARD_DEFINE = NUCLEO_L4R5ZI_BOARD
   OPENOCD_CFG ?= board/st_nucleo_l4.cfg
 else
-  $(error Unknown PLATFORM '$(PLATFORM)', use board, stm32f4discovery or qemu)
+  $(error Unknown PLATFORM '$(PLATFORM)', use board, stm32l476rg, stm32f4discovery or qemu)
 endif
 
 # Paths
@@ -104,6 +121,9 @@ ifeq ($(PLATFORM),qemu)
   ASFLAGS += -DDATA_IN_FLASH
 else
   CFLAGS += -D$(OPENCM3_FAMILY)
+  # Distinguishes boards within one family: both Nucleos are STM32L4, but they
+  # differ in console pins, maximum clock and flash wait states.
+  CFLAGS += -D$(BOARD_DEFINE)
   CFLAGS += -I$(LIBOPENCM3_DIR)/include
 endif
 
@@ -308,6 +328,7 @@ help:
 	@echo ""
 	@echo "Platform selection:"
 	@echo "  PLATFORM=board            - Build for Nucleo-L4R5ZI board (default)"
+	@echo "  PLATFORM=stm32l476rg      - Build for Nucleo-L476RG board"
 	@echo "  PLATFORM=stm32f4discovery - Build for STM32F407 (STM32F4DISCOVERY) board"
 	@echo "  PLATFORM=qemu             - Build for QEMU mps2-an386 emulation"
 	@echo ""
@@ -319,3 +340,4 @@ help:
 	@echo "  make PLATFORM=qemu           # Build for QEMU"
 	@echo "  make PLATFORM=qemu qemu-gdb  # Build and debug in QEMU"
 	@echo "  make PLATFORM=stm32f4discovery SERIAL_PORT=/dev/ttyUSB0 test-board"
+	@echo "  make PLATFORM=stm32l476rg SERIAL_PORT=/dev/ttyACM0 test-board"

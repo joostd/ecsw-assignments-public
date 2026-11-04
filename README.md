@@ -6,6 +6,11 @@ the core algorithms in [Jasmin](https://github.com/jasmin-lang/jasmin) and
 verify them through shared C firmware, Python reference code, and automated
 tests.
 
+The Nucleo‑L476RG (`PLATFORM=stm32l476rg`) and STM32F4DISCOVERY
+(`PLATFORM=stm32f4discovery`) are supported as alternative boards, and
+`PLATFORM=qemu` needs no hardware at all. See
+[common/TESTING_GUIDE.md](common/TESTING_GUIDE.md).
+
 ## Getting Started
 ### Method 1 (Recommended)
 Use our provided VM. You can obtain it from: https://nce.mpi-sp.org/index.php/s/y4ddz4cwYgxjKD7

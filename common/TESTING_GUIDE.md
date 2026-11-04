@@ -39,6 +39,28 @@ make test-board           # runs tests/test_chacha20.py --platform board
 If automatic port detection fails, supply the serial path explicitly (e.g.,
 `--port /dev/ttyACM0` on Linux or `/dev/cu.usbmodem*` on macOS).
 
+### Nucleo-L476RG (STM32L476RG)
+
+Unlike the STM32F4DISCOVERY, this board needs no external adapter: its ST-LINK
+virtual COM port is wired to USART2 on PA2/PA3, so flashing and the serial
+console share one USB cable.
+
+```bash
+cd assignment1-chacha20
+make PLATFORM=stm32l476rg test-board
+```
+
+The benchmark clock is 16 MHz, the fastest this part runs with zero flash wait
+states in VCORE range 1 (the L4R5ZI manages 20 MHz, the F407 24 MHz), so cycle
+counts are not skewed by flash stalls. `CLOCK_FAST` is 80 MHz, the STM32L476's
+maximum — the Nucleo-L4R5ZI's 120 MHz is an L4+ figure and does not apply here.
+
+A factory board may ship read-out protected (OpenOCD reports `RDP level 1` and
+flashing fails with `stm32x device protected`). Clear it once with
+`openocd -f board/st_nucleo_l4.cfg -c init -c halt -c "stm32l4x unlock 0" -c shutdown`,
+then **power-cycle the board** so the new option bytes take effect. This
+mass-erases the flash.
+
 ### STM32F4DISCOVERY (STM32F407)
 
 The STM32F4DISCOVERY has no USB serial port of its own, so the UART goes

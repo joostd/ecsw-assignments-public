@@ -15,7 +15,17 @@
 #include <libopencm3/stm32/rng.h>
 #include <libopencm3/stm32/usart.h>
 
-#if defined(STM32L4)
+/* NUCLEO_L476RG_BOARD must be tested before STM32L4: the L476RG is an STM32L4
+   too, but a 64-pin part with no port G and a different console peripheral. */
+#if defined(NUCLEO_L476RG_BOARD)
+/* USART2 on PA2 (TX) / PA3 (RX), wired to the ST-LINK virtual COM port */
+#define SERIAL_GPIO GPIOA
+#define SERIAL_GPIO_CLK RCC_GPIOA
+#define SERIAL_USART USART2
+#define SERIAL_USART_CLK RCC_USART2
+#define SERIAL_PINS (GPIO2 | GPIO3)
+#define SERIAL_AF GPIO_AF7
+#elif defined(STM32L4)
 #define SERIAL_GPIO GPIOG
 #define SERIAL_GPIO_CLK RCC_GPIOG
 #define SERIAL_USART LPUART1
@@ -35,7 +45,9 @@
 #error "Unsupported target: define STM32L4 or STM32F4"
 #endif
 
-#if defined(STM32L4)
+/* Only the L4R5ZI needs this: it writes the 5-bit PLLPDIV field at bits 31:27,
+   which exists on L4+ parts but is reserved on the STM32L476. */
+#if defined(STM32L4) && !defined(NUCLEO_L476RG_BOARD)
 /* Patched function for newer PLL not yet supported by opencm3 */
 static void _rcc_set_main_pll(uint32_t source, uint32_t pllm, uint32_t plln, uint32_t pllp,
                               uint32_t pllq, uint32_t pllr) {
@@ -56,7 +68,50 @@ extern uint32_t rcc_apb1_frequency;
 extern uint32_t rcc_apb2_frequency;
 #endif
 
-#if defined(STM32L4)
+#if defined(NUCLEO_L476RG_BOARD)
+static void clock_setup(enum clock_mode clock) {
+    rcc_periph_clock_enable(RCC_PWR);
+    rcc_periph_clock_enable(RCC_SYSCFG);
+
+    switch (clock) {
+    case CLOCK_BENCHMARK:
+        /* Benchmark straight from the HSI16 without prescaling. 16MHz is the
+           fastest this part runs at zero flash wait states in VCORE range 1
+           (1WS is needed above 16MHz), so cycle counts are not skewed by
+           flash stalls. */
+        pwr_set_vos_scale(PWR_SCALE1);
+        rcc_osc_on(RCC_HSI16);
+        rcc_wait_for_osc_ready(RCC_HSI16);
+        rcc_set_hpre(RCC_CFGR_HPRE_NODIV);
+        rcc_set_ppre1(RCC_CFGR_PPRE_NODIV);
+        rcc_set_ppre2(RCC_CFGR_PPRE_NODIV);
+        flash_dcache_enable();
+        flash_icache_enable();
+        flash_set_ws(FLASH_ACR_LATENCY_0WS);
+        flash_prefetch_enable();
+        rcc_set_sysclk_source(RCC_CFGR_SW_HSI16);
+        rcc_wait_for_sysclk_status(RCC_HSI16);
+        rcc_ahb_frequency = 16000000;
+        rcc_apb1_frequency = 16000000;
+        rcc_apb2_frequency = 16000000;
+        _clock_freq = 16000000;
+        break;
+    case CLOCK_FAST:
+    default:
+        /* 80MHz is the maximum for the STM32L476. The stock opencm3 config
+           (HSI16 /4 *40 /2, range 1, 4 wait states) is exactly that, and
+           rcc_clock_setup_pll also enables RCC_PWR, waits for PLL lock and
+           sets the rcc_*_frequency globals. */
+        rcc_clock_setup_pll(&rcc_hsi16_configs[RCC_CLOCK_VRANGE1_80MHZ]);
+        flash_prefetch_enable();
+        _clock_freq = 80000000;
+        break;
+    }
+    /* No RNG here: the STM32L476 has no HSI48, so the L4R5ZI's
+       rcc_wait_for_osc_ready(RCC_HSI48) below would spin forever. Nothing in
+       this repo reads the RNG, so it is simply left disabled. */
+}
+#elif defined(STM32L4)
 static void clock_setup(enum clock_mode clock) {
     rcc_periph_clock_enable(RCC_PWR);
     rcc_periph_clock_enable(RCC_SYSCFG);
@@ -168,7 +223,10 @@ static void usart_setup(void) {
     rcc_periph_clock_enable(SERIAL_GPIO_CLK);
     rcc_periph_clock_enable(SERIAL_USART_CLK);
 
-#if defined(STM32L4)
+#if defined(STM32L4) && !defined(NUCLEO_L476RG_BOARD)
+    /* Port G pins PG[15:2] are powered from VDDIO2 and stay isolated until
+       IOSV is set. Only applies to packages that have port G; CR2 bit 9 is
+       reserved on the 64-pin L476RG, whose console is on port A. */
     PWR_CR2 |= PWR_CR2_IOSV;
 #endif
     gpio_set_output_options(SERIAL_GPIO, GPIO_OTYPE_PP, GPIO_OSPEED_100MHZ, SERIAL_PINS);
