@@ -6,9 +6,12 @@
 #include <stdlib.h>
 
 /* Name of the target board, e.g. for startup banners.
-   NUCLEO_L476RG_BOARD is checked before STM32L4, which it also defines. */
+   The specific board macros are checked before STM32L4, which they also
+   define. */
 #if defined(NUCLEO_L476RG_BOARD)
 #define HAL_BOARD_NAME "Nucleo-L476RG"
+#elif defined(NUCLEO_L432KC_BOARD)
+#define HAL_BOARD_NAME "Nucleo-L432KC"
 #elif defined(STM32L4)
 #define HAL_BOARD_NAME "Nucleo-L4R5ZI"
 #elif defined(STM32F4)

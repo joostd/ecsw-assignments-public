@@ -15,8 +15,14 @@
 #include <libopencm3/stm32/rng.h>
 #include <libopencm3/stm32/usart.h>
 
-/* NUCLEO_L476RG_BOARD must be tested before STM32L4: the L476RG is an STM32L4
-   too, but a 64-pin part with no port G and a different console peripheral. */
+/* Nucleo boards built on a baseline (non-L4+) STM32L4. They share the console
+   peripheral (USART2 via the ST-LINK VCP), the lack of a port G, the 80MHz
+   maximum and the baseline flash wait-state table; only the console pins
+   differ. This must be tested before STM32L4, which they also define. */
+#if defined(NUCLEO_L476RG_BOARD) || defined(NUCLEO_L432KC_BOARD)
+#define STM32L4_BASELINE_BOARD
+#endif
+
 #if defined(NUCLEO_L476RG_BOARD)
 /* USART2 on PA2 (TX) / PA3 (RX), wired to the ST-LINK virtual COM port */
 #define SERIAL_GPIO GPIOA
@@ -25,6 +31,19 @@
 #define SERIAL_USART_CLK RCC_USART2
 #define SERIAL_PINS (GPIO2 | GPIO3)
 #define SERIAL_AF GPIO_AF7
+#elif defined(NUCLEO_L432KC_BOARD)
+/* USART2 via the ST-LINK virtual COM port, but on this board RX is routed to
+   PA15 rather than PA3, and the two pins need different alternate functions:
+   PA2 is USART2_TX on AF7 while PA15 is USART2_RX on AF3. */
+#define SERIAL_GPIO GPIOA
+#define SERIAL_GPIO_CLK RCC_GPIOA
+#define SERIAL_USART USART2
+#define SERIAL_USART_CLK RCC_USART2
+#define SERIAL_PIN_TX GPIO2
+#define SERIAL_PIN_RX GPIO15
+#define SERIAL_PINS (SERIAL_PIN_TX | SERIAL_PIN_RX)
+#define SERIAL_AF GPIO_AF7
+#define SERIAL_AF_RX GPIO_AF3
 #elif defined(STM32L4)
 #define SERIAL_GPIO GPIOG
 #define SERIAL_GPIO_CLK RCC_GPIOG
@@ -47,7 +66,7 @@
 
 /* Only the L4R5ZI needs this: it writes the 5-bit PLLPDIV field at bits 31:27,
    which exists on L4+ parts but is reserved on the STM32L476. */
-#if defined(STM32L4) && !defined(NUCLEO_L476RG_BOARD)
+#if defined(STM32L4) && !defined(STM32L4_BASELINE_BOARD)
 /* Patched function for newer PLL not yet supported by opencm3 */
 static void _rcc_set_main_pll(uint32_t source, uint32_t pllm, uint32_t plln, uint32_t pllp,
                               uint32_t pllq, uint32_t pllr) {
@@ -68,7 +87,7 @@ extern uint32_t rcc_apb1_frequency;
 extern uint32_t rcc_apb2_frequency;
 #endif
 
-#if defined(NUCLEO_L476RG_BOARD)
+#if defined(STM32L4_BASELINE_BOARD)
 static void clock_setup(enum clock_mode clock) {
     rcc_periph_clock_enable(RCC_PWR);
     rcc_periph_clock_enable(RCC_SYSCFG);
@@ -223,14 +242,21 @@ static void usart_setup(void) {
     rcc_periph_clock_enable(SERIAL_GPIO_CLK);
     rcc_periph_clock_enable(SERIAL_USART_CLK);
 
-#if defined(STM32L4) && !defined(NUCLEO_L476RG_BOARD)
+#if defined(STM32L4) && !defined(STM32L4_BASELINE_BOARD)
     /* Port G pins PG[15:2] are powered from VDDIO2 and stay isolated until
        IOSV is set. Only applies to packages that have port G; CR2 bit 9 is
        reserved on the 64-pin L476RG, whose console is on port A. */
     PWR_CR2 |= PWR_CR2_IOSV;
 #endif
     gpio_set_output_options(SERIAL_GPIO, GPIO_OTYPE_PP, GPIO_OSPEED_100MHZ, SERIAL_PINS);
+#if defined(SERIAL_AF_RX)
+    /* TX and RX sit on pins with different alternate functions, so they have
+       to be programmed separately. */
+    gpio_set_af(SERIAL_GPIO, SERIAL_AF, SERIAL_PIN_TX);
+    gpio_set_af(SERIAL_GPIO, SERIAL_AF_RX, SERIAL_PIN_RX);
+#else
     gpio_set_af(SERIAL_GPIO, SERIAL_AF, SERIAL_PINS);
+#endif
     gpio_mode_setup(SERIAL_GPIO, GPIO_MODE_AF, GPIO_PUPD_NONE, SERIAL_PINS);
     usart_set_baudrate(SERIAL_USART, SERIAL_BAUD);
     usart_set_databits(SERIAL_USART, 8);

@@ -61,6 +61,22 @@ flashing fails with `stm32x device protected`). Clear it once with
 then **power-cycle the board** so the new option bytes take effect. This
 mass-erases the flash.
 
+### Nucleo-L432KC (STM32L432KC)
+
+Like the Nucleo-L476RG, no external adapter is needed; the ST-LINK virtual COM
+port is wired to USART2. Note the pins differ from the other boards: TX is PA2
+(AF7) as usual, but RX is **PA15 (AF3)**, not PA3.
+
+```bash
+cd assignment1-chacha20
+make PLATFORM=stm32l432kc test-board
+```
+
+This part has 256KB flash and 64KB RAM, comfortably more than the largest
+assignment needs (ecdh25519 is about 42KB of flash and 4KB of static RAM).
+Clocks match the L476RG: 80MHz for `CLOCK_FAST`, 16MHz for `CLOCK_BENCHMARK`
+so that flash runs without wait states.
+
 ### STM32F4DISCOVERY (STM32F407)
 
 The STM32F4DISCOVERY has no USB serial port of its own, so the UART goes
